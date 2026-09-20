@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "recreator"
+dynamic = ["version"]
+description = "Rebuild a pretrained transformer as a HELIX model without pretraining it again."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+keywords = [
+    "llm", "distillation", "helix", "architecture-transfer", "knowledge-transfer",
+    "transformers", "linear-attention", "long-context",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.2",
+    "helix-lm>=0.1.0",
+    "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+hub = ["huggingface-hub>=0.23", "transformers>=4.40"]
+train = ["transformers>=4.40", "huggingface-hub>=0.23", "datasets>=2.18"]
+quant = ["bitsandbytes>=0.43"]
+all = ["transformers>=4.40", "huggingface-hub>=0.23", "datasets>=2.18", "bitsandbytes>=0.43"]
+dev = ["pytest>=8.0", "transformers>=4.40"]
+
+[project.scripts]
+recreator = "recreator.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/wisk-inc/recretor"
+Repository = "https://github.com/wisk-inc/recretor"
+Issues = "https://github.com/wisk-inc/recretor/issues"
+
+[tool.hatch.version]
+path = "src/recreator/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recreator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
