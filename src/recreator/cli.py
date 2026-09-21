@@ -64,9 +64,12 @@ def _cmd_graft(args: argparse.Namespace) -> int:
         max_position_embeddings=args.max_position,
         identity_start=not args.no_identity_start,
         merge_mode=args.merge_mode,
+        mlp_mode=args.mlp_mode,
         dtype=torch.float32,
     )
     print(result.report.summary())
+    if result.sparse_layers:
+        print(f"kept the donor sparse: {len(result.sparse_layers)} layers of experts and routers")
     if result.report.missing:
         print(f"left at init: {len(result.report.missing)} tensors (the new strands)")
     adapted = [entry for entry in result.report.transferred if entry.adapted]
@@ -130,6 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--verify", action="store_true", help="Check the graft reproduces the donor.")
     build.add_argument("--no-identity-start", action="store_true", help="Skip silencing the new strands.")
     build.add_argument("--merge-mode", default="concat", choices=("concat", "average"))
+    build.add_argument(
+        "--mlp-mode",
+        default="dense",
+        choices=("dense", "sparse"),
+        help="For a MoE donor: 'sparse' keeps every expert and the router, swapping only the "
+        "attention. 'dense' collapses the experts, which is much smaller. Default: dense.",
+    )
     build.set_defaults(func=_cmd_graft)
 
     check = sub.add_parser("verify", help="Check a graft reproduces its donor inside the local window.")

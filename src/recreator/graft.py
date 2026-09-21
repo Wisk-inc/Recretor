@@ -16,16 +16,17 @@ it, the student starts at the donor's loss and training is repair rather than le
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
 from .donor import DonorHandle, load_donor_state, resolve_donor
 from .errors import GraftError
-from .mapping import GLOBAL_NAMES, GraftReport, donor_to_student, fit_tensor
+from .mapping import GLOBAL_NAMES, FitReport, GraftReport, donor_to_student, fit_tensor
 from .student import derive_student_config
 from .techniques.expert_merge import collect_experts, concat_experts, merge_experts
+from .moe import MoESpec, install_sparse_mlps, load_sparse_experts
 from .techniques.gates import DEFAULT_GATE_BIAS, install_strand_gates, silence_recurrent_strands
 
 
@@ -39,6 +40,7 @@ class GraftResult:
     donor_id: str
     silenced_strands: list[str]
     gated_layers: list[str]
+    sparse_layers: list[str] = field(default_factory=list)
 
     def trainable_fraction(self) -> float:
         total = sum(p.numel() for p in self.model.parameters())
@@ -70,6 +72,7 @@ def graft(
     expert_traffic: dict[int, torch.Tensor] | None = None,
     merge_mode: str = "concat",
     moe_keep_experts: int | None = None,
+    mlp_mode: str = "dense",
     allow_svd: bool = True,
     device: str = "cpu",
 ) -> GraftResult:
@@ -90,6 +93,10 @@ def graft(
             into the donor's own MLP width, which is far smaller and far less faithful.
         moe_keep_experts: Experts to keep under ``"concat"``. Defaults to the donor's
             ``num_experts_per_tok``, giving the student the same active width the MoE used.
+        mlp_mode: For a MoE donor, ``"sparse"`` keeps its experts and router intact and swaps
+            only the attention for HELIX's braid -- the whole donor is preserved. ``"dense"``
+            collapses the experts per ``merge_mode``, which is far smaller but discards most of
+            the donor's parameters. Ignored for a dense donor.
         allow_svd: Project mismatched widths through a truncated SVD rather than truncating.
         device: Where to build the student.
 
@@ -106,7 +113,11 @@ def graft(
 
     overrides = dict(overrides or {})
     keep_experts = moe_keep_experts
-    if handle.is_moe and merge_mode == "concat":
+    sparse = handle.is_moe and mlp_mode == "sparse"
+    spec = MoESpec.from_donor(handle.config) if sparse else None
+    if sparse and spec is None:
+        raise GraftError("mlp_mode='sparse' needs a donor that declares experts.")
+    if handle.is_moe and not sparse and merge_mode == "concat":
         # A concatenated MLP is `keep * per_expert_width` wide. Default to the number of experts the
         # router actually dispatches per token, so the dense student keeps the MoE's active width.
         if keep_experts is None:
@@ -122,6 +133,11 @@ def graft(
         overrides=overrides,
     )
     model = HelixForCausalLM(config).to(device=device, dtype=dtype)
+    sparse_layers: list[str] = []
+    if sparse:
+        # Swapping the dense MLP out before reading the state dict keeps the expert parameters out
+        # of the name-matching pass entirely -- they are loaded from the donor's own layout instead.
+        sparse_layers = install_sparse_mlps(model, spec, dtype=dtype)
 
     student_state = model.state_dict()
     wanted = {name for name in student_state}
@@ -154,8 +170,20 @@ def graft(
         report.transferred.append(fit_report)
         report.transferred_parameters += fitted.numel()
 
-    # An MoE donor has no `mlp.*_proj` to copy, so the dense MLP is still at its initialisation.
-    if handle.is_moe:
+    # An MoE donor has no `mlp.*_proj` to copy, so the feed-forward is still at its initialisation.
+    if sparse:
+        loaded, copied = load_sparse_experts(model, donor_state, num_layers=config.num_hidden_layers)
+        report.transferred_parameters += copied
+        report.transferred.append(
+            FitReport(
+                name=f"model.layers.*.mlp (sparse, {spec.num_experts} experts)",
+                donor_shape=(loaded, spec.num_experts, spec.intermediate_size, config.hidden_size),
+                student_shape=(loaded, spec.num_experts, spec.intermediate_size, config.hidden_size),
+                method="sparse",
+                notes=f"kept {spec.num_experts} experts and the router on {loaded} layers",
+            )
+        )
+    elif handle.is_moe:
         for layer in range(config.num_hidden_layers):
             stack = collect_experts(donor_state, layer)
             if stack is None:
@@ -187,7 +215,7 @@ def graft(
         )
 
     missing_before = {name for name in wanted if name not in updates}
-    model.load_state_dict({**student_state, **updates})
+    model.load_state_dict({**student_state, **updates}, strict=False)
     if config.tie_word_embeddings:
         model.lm_head.weight = model.model.embed_tokens.weight
 
@@ -209,6 +237,7 @@ def graft(
         donor_id=donor_id,
         silenced_strands=silenced,
         gated_layers=gated,
+        sparse_layers=sparse_layers,
     )
 
 

@@ -120,28 +120,64 @@ supplied. A plan that does not fit prints the ranked list of what to change inst
 
 ## MoE donors
 
-A HELIX block has one dense MLP; GPT-OSS and Mixtral have many plus a router. There is no exact
-dense equivalent, but there is a right way and a wrong way to approximate one.
+A HELIX block braids a new **sequence mixer**. Whether the block's feed-forward is one dense MLP or
+a routed bank of experts is an orthogonal choice, and nothing in the braid depends on it. So there
+are two ways to recreate a MoE donor, and the default is not the interesting one.
 
-Averaging expert weights is the wrong way, and not by a little — `expert(mean(W))` is not
-`mean(expert(W))` once a SwiGLU sits between them. **Concatenating** them is exact: stack the kept
-experts' `gate`/`up` rows and their `down` columns and the block-diagonal structure makes one dense
-layer compute `Σᵢ wᵢ · expertᵢ(x)` — the true routed mixture.
+### `--mlp-mode sparse` — keep the whole donor
+
+Copy the experts and the router across verbatim and replace **only** the attention. Every parameter
+survives; the recreation's job shrinks to learning the two new strands.
+
+```bash
+recreator graft openai/gpt-oss-120b --mlp-mode sparse --preset balanced
+```
+
+| GPT-OSS-120B → HELIX (sparse) | |
+| --- | --- |
+| experts kept | 128 per layer, top-4 — all of them |
+| total parameters | 117.5B |
+| active per token | 6.5B |
+| **new strands to train** | **0.753B — 0.64% of the model** |
+
+The student's `SparseMLP` reproduces the donor's routed mixture to 5.8e-10. Frozen experts can be
+held at four bits (`quantize_experts()`), unpacked one expert at a time in the forward pass, at
+0.53 bytes per parameter — which is what puts 117B on a single card.
+
+### `--mlp-mode dense` — collapse the experts
+
+Flattens the bank into one MLP. Much smaller, and it discards most of the donor:
 
 | merge mode | error vs. the real mixture |
 | --- | --- |
 | `average` (weight blending) | 2.4e+02 — on a signal of magnitude 2.6e+02 |
 | `concat` (default) | **6.1e-05** |
 
-The price is width: keeping `k` experts of width `m` gives an MLP of width `k·m`. `recreator`
-defaults to the donor's `num_experts_per_tok`, so the dense student keeps the MoE's *active* width.
+Averaging expert weights is wrong by roughly the magnitude of the signal — `expert(mean(W))` is not
+`mean(expert(W))` once a SwiGLU sits between them. Concatenation is exact: stack the kept experts'
+`gate`/`up` rows and their `down` columns and the block-diagonal structure makes one dense layer
+compute `Σᵢ wᵢ · expertᵢ(x)`. The price is width (`k` experts of width `m` → an MLP of width `k·m`).
 
-> **Worth knowing before you plan a GPT-OSS run.** GPT-OSS-120B has ~117B parameters but only ~5B
-> active per token, because the experts hold nearly all the mass. Collapsing it to a dense student
-> gives a model of a few billion parameters, not 120B. That is not a limitation of this tool — it is
-> what "dense equivalent of a sparse model" means. You are distilling a 120B *teacher* into a small
-> dense student, which is a legitimate and useful thing to do, but it is not training a 120B model.
-> `recreator plan` prints the real number before you commit to it.
+> Collapsing GPT-OSS-120B to dense gives a student of **~3.8B**, not 120B — nearly all of a sparse
+> model's mass is in its experts. That is what "dense equivalent of a sparse model" means. Use
+> `--mlp-mode sparse` if you want the donor kept whole.
+
+## Fitting 117B on one card
+
+Two passes, neither holding both models:
+
+```
+PASS 1  cache teacher logits            teacher @ 4-bit      59.9 GiB
+PASS 2  train the strands               frozen trunk @ 4-bit 57.6 GiB
+        (teacher read from disk)        strands bf16          1.4 GiB
+                                        gradients             1.4 GiB
+                                        8-bit AdamW           4.2 GiB
+                                        activations @ 8k      1.9 GiB
+                                        ─────────────────────────────
+                                        TOTAL                66.6 GiB  of 96
+```
+
+Run `recreator plan <donor> --budget <GiB>` for your own numbers rather than trusting these.
 
 ## Fitting more than the card holds
 

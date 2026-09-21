@@ -26,6 +26,8 @@ from .errors import DonorError, GraftError, PlanError, RecreatorError
 from .export import model_card, push_to_hub, save_recreated
 from .graft import GraftResult, graft
 from .mapping import FitReport, GraftReport
+from .moe import MoESpec, SparseMLP, count_sparse_parameters, install_sparse_mlps
+from .quant import dequantize_4bit, quantization_error, quantize_4bit
 from .planner import MemoryPlan, count_parameters, plan_memory
 from .student import PRESETS, Preset, derive_student_config
 from .techniques import ContextLadder, TeacherCache
@@ -41,22 +43,29 @@ __all__ = [
     "GraftReport",
     "GraftResult",
     "MemoryPlan",
+    "MoESpec",
     "PlanError",
     "Preset",
     "RecreatorError",
+    "SparseMLP",
     "TeacherCache",
     "TrainingRecord",
     "__version__",
     "count_parameters",
+    "count_sparse_parameters",
+    "dequantize_4bit",
     "derive_student_config",
     "distill",
     "distill_layerwise",
     "freeze_to_new_strands",
     "graft",
+    "install_sparse_mlps",
     "load_teacher",
     "model_card",
     "plan_memory",
     "push_to_hub",
+    "quantization_error",
+    "quantize_4bit",
     "recreate",
     "resolve_donor",
     "save_recreated",
