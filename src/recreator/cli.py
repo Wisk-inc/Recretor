@@ -109,6 +109,20 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if outcome.passed else 1
 
 
+def _cmd_context(args: argparse.Namespace) -> int:
+    from .context import context_cost, context_table
+    from .donor import resolve_donor
+    from .student import derive_student_config
+
+    handle = resolve_donor(args.donor)
+    config = derive_student_config(handle.config, args.preset, max_position_embeddings=args.max_position)
+    if args.tokens:
+        print(context_cost(config, args.tokens).render())
+    else:
+        print(context_table(config))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="recreator",
@@ -147,6 +161,11 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--seq-len", type=int, default=0, help="0 picks a length inside the local window.")
     check.add_argument("--tolerance", type=float, default=1e-3)
     check.set_defaults(func=_cmd_verify)
+
+    cost = sub.add_parser("context", help="What a given context length costs to hold and decode from.")
+    _add_shared(cost)
+    cost.add_argument("--tokens", type=int, default=0, help="One length to price. 0 prints a table.")
+    cost.set_defaults(func=_cmd_context)
 
     return parser
 

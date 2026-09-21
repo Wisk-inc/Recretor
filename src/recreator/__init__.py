@@ -20,6 +20,7 @@ working out what fits on a given card before starting.
 """
 
 from ._version import __version__
+from .context import ContextCost, context_cost, context_table
 from .distill import DistillConfig, TrainingRecord, distill, distill_layerwise, freeze_to_new_strands
 from .donor import DonorHandle, load_teacher, resolve_donor
 from .errors import DonorError, GraftError, PlanError, RecreatorError
@@ -34,6 +35,7 @@ from .techniques import ContextLadder, TeacherCache
 
 __all__ = [
     "PRESETS",
+    "ContextCost",
     "ContextLadder",
     "DistillConfig",
     "DonorError",
@@ -51,6 +53,8 @@ __all__ = [
     "TeacherCache",
     "TrainingRecord",
     "__version__",
+    "context_cost",
+    "context_table",
     "count_parameters",
     "count_sparse_parameters",
     "dequantize_4bit",

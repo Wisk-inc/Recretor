@@ -162,6 +162,24 @@ compute `Σᵢ wᵢ · expertᵢ(x)`. The price is width (`k` experts of width `
 > model's mass is in its experts. That is what "dense equivalent of a sparse model" means. Use
 > `--mlp-mode sparse` if you want the donor kept whole.
 
+## What context length costs
+
+A decode step's work does not grow with the context behind it — but the history still has to be
+written down somewhere. `recreator context` separates the three, because they scale differently:
+
+```
+context  cold store  hot state  read/token   descent
+  1e+06     24.8 GB    34.8 MB     12.6 MB  4 levels
+  1e+07    248.0 GB    34.8 MB     12.6 MB  5 levels
+  1e+08      2.5 TB    34.8 MB     12.6 MB  6 levels
+  1e+09     24.8 TB    34.8 MB     12.6 MB  7 levels
+```
+
+Hot state and per-step reads are **constant in N**; only the tree descent grows, logarithmically.
+The cold store is linear and unavoidable — a model that can quote an exact token from far back must
+have kept it — but it is append-only and never rewritten, so it streams from host RAM or NVMe
+rather than sitting in VRAM. At 12.6 MB per step that is ~1.8 ms from an NVMe drive.
+
 ## Fitting 117B on one card
 
 Two passes, neither holding both models:
@@ -229,6 +247,7 @@ push_to_hub("out/", "you/qwen3-8b-helix", private=True)
 | command | what it does |
 | --- | --- |
 | `recreator plan <donor> --budget 96` | estimate memory before committing |
+| `recreator context <donor> --tokens 1e9` | what a context length costs to hold and decode |
 | `recreator graft <donor> --verify -o out/` | build the student, check it, save it |
 | `recreator verify <donor>` | check a graft reproduces its donor |
 
